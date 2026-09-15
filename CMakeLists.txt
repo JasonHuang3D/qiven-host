@@ -7,7 +7,10 @@ qiven_project_defaults()
 
 option(QIVEN_HOST_BUILD_TESTS "Build qiven-host tests" ON)
 
-add_library(qiven-host-core STATIC src/authority.cpp)
+add_library(qiven-host-core STATIC
+    src/authority.cpp
+    src/fence_store.cpp
+)
 target_include_directories(qiven-host-core PUBLIC include)
 qiven_target_defaults(qiven-host-core SCOPE PUBLIC FOLDER "Libraries")
 
@@ -17,8 +20,16 @@ qiven_target_defaults(qiven-host SCOPE PRIVATE FOLDER "Applications")
 
 if(QIVEN_HOST_BUILD_TESTS)
     enable_testing()
+
     add_executable(qiven-host-core-tests tests/authority_tests.cpp)
     target_link_libraries(qiven-host-core-tests PRIVATE qiven-host-core)
     qiven_test_target_defaults(qiven-host-core-tests)
     qiven_register_test(NAME qiven-host-core-tests TARGET qiven-host-core-tests)
+
+    if(WIN32)
+        add_executable(qiven-host-fence-store-tests tests/fence_store_tests.cpp)
+        target_link_libraries(qiven-host-fence-store-tests PRIVATE qiven-host-core)
+        qiven_test_target_defaults(qiven-host-fence-store-tests)
+        qiven_register_test(NAME qiven-host-fence-store-tests TARGET qiven-host-fence-store-tests)
+    endif()
 endif()
