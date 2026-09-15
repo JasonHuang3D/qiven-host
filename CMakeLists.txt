@@ -7,7 +7,7 @@ qiven_project_defaults()
 
 option(QIVEN_HOST_BUILD_TESTS "Build qiven-host tests" ON)
 
-add_library(qiven-host-core STATIC src/authority.cpp)
+add_library(qiven-host-core STATIC src/authority.cpp src/fence_store.cpp)
 target_include_directories(qiven-host-core PUBLIC include)
 qiven_target_defaults(qiven-host-core SCOPE PUBLIC FOLDER "Libraries")
 
