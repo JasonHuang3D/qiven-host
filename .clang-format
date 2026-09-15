@@ -1,0 +1,26 @@
+---
+BasedOnStyle: Microsoft
+Standard: c++20
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: true
+AlignConsecutiveMacros: true
+AlignOperands: Align
+AllowShortCaseLabelsOnASingleLine: true
+IncludeBlocks: Preserve
+IndentPPDirectives: BeforeHash
+IndentWidth: 4
+SpacesBeforeTrailingComments: 1
+BreakTemplateDeclarations: Yes
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterUnion: true
+BreakConstructorInitializers: AfterColon
+Cpp11BracedListStyle: false
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+SpaceBeforeCpp11BracedList: true
+ColumnLimit: 0
+ConstructorInitializerIndentWidth: 0
+...

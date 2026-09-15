@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "repository_name": "qiven-host",
+  "default_gate": "local",
+  "tasks": {
+    "exact-head": {
+      "builtin": "exact_head"
+    },
+    "format-check": {
+      "argv": ["tools/format-check.cmd"]
+    },
+    "configure": {
+      "argv": ["tools/gen-vs2022-x64.cmd"]
+    },
+    "build-debug": {
+      "argv": ["{cmake}", "--build", "--preset", "vs2022-x64-debug", "--parallel"]
+    },
+    "build-release": {
+      "argv": ["{cmake}", "--build", "--preset", "vs2022-x64-release", "--parallel"]
+    },
+    "test-debug": {
+      "argv": ["{ctest}", "--preset", "vs2022-x64-debug"]
+    },
+    "test-release": {
+      "argv": ["{ctest}", "--preset", "vs2022-x64-release"]
+    },
+    "diff-check": {
+      "builtin": "git_diff_check",
+      "base": "origin/main"
+    },
+    "clean-tree": {
+      "builtin": "git_clean_tree"
+    }
+  },
+  "gates": {
+    "local": [
+      "format-check",
+      "configure",
+      ["build-debug", "build-release"],
+      ["test-debug", "test-release"],
+      "diff-check",
+      "clean-tree"
+    ]
+  },
+  "ci": {
+    "full": {
+      "workflow": "ci.yml",
+      "inputs": {
+        "jobs": "full"
+      }
+    }
+  }
+}

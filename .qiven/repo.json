@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "template": "cpp-app",
+  "template_version": "0.2.0",
+  "repository_name": "qiven-host",
+  "cmake_project_name": "qiven-host",
+  "cmake_target_name": "qiven-host",
+  "cmake_alias": "qiven::host",
+  "cpp_namespace": "qiven::host",
+  "test_option_name": "QIVEN_HOST_BUILD_TESTS",
+  "vs_solution_name": "qiven-host"
+}

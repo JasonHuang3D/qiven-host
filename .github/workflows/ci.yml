@@ -1,0 +1,71 @@
+name: CI
+
+run-name: CI / ${{ inputs.jobs }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: "Validation units: full, windows, linux, macos"
+        required: true
+        default: full
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Validation plan
+    runs-on: ubuntu-24.04
+    outputs:
+      windows: ${{ steps.plan.outputs.windows }}
+      linux: ${{ steps.plan.outputs.linux }}
+      macos: ${{ steps.plan.outputs.macos }}
+    steps:
+      - id: plan
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.jobs }}
+        run: |
+          case "$REQUESTED" in
+            full) selected="windows linux macos" ;;
+            windows|linux|macos) selected="$REQUESTED" ;;
+            *) echo "Unknown validation unit: $REQUESTED" >&2; exit 1 ;;
+          esac
+          for unit in windows linux macos; do
+            if [[ " $selected " == *" $unit "* ]]; then value=true; else value=false; fi
+            echo "$unit=$value" >> "$GITHUB_OUTPUT"
+          done
+
+  validate:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: ${{ (matrix.id == 'windows' && needs.plan.outputs.windows == 'true') || (matrix.id == 'linux' && needs.plan.outputs.linux == 'true') || (matrix.id == 'macos' && needs.plan.outputs.macos == 'true') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: windows, name: Windows MSVC x64, os: windows-2022 }
+          - { id: linux, name: Linux GCC x64, os: ubuntu-24.04 }
+          - { id: macos, name: macOS AppleClang arm64, os: macos-15 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: cmake -S . -B build -DQIVEN_HOST_BUILD_TESTS=ON
+      - run: cmake --build build --config Debug --parallel
+      - run: ctest --test-dir build -C Debug --output-on-failure
+
+  ci-gate:
+    name: CI Gate
+    if: ${{ always() }}
+    needs: [plan, validate]
+    runs-on: ubuntu-24.04
+    steps:
+      - shell: bash
+        env:
+          PLAN: ${{ needs.plan.result }}
+          VALIDATE: ${{ needs.validate.result }}
+        run: |
+          [[ "$PLAN" == success ]]
+          [[ "$VALIDATE" == success || "$VALIDATE" == skipped ]]
