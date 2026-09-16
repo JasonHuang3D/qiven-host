@@ -361,6 +361,7 @@ AuthorityBrokerResult AuthorityBroker::release(BrokerSessionId session, const Le
         !digest_id(session, entry.session_digest, native_error))
         return fail_closed(AuthorityBrokerError::identity_digest_failure, native_error);
 
+    const AuthorityPhase before = state_.phase();
     const RequestSequence prior_sequence = state_.next_sequence();
     const TransitionResult transition = state_.release(session, lease);
     entry.generation = state_.generation();
@@ -369,6 +370,12 @@ AuthorityBrokerResult AuthorityBroker::release(BrokerSessionId session, const Le
 
     if (!transition.ok())
     {
+        if (state_.phase() != before)
+        {
+            const AuthorityBrokerResult persisted = persist_state_locked();
+            if (!persisted.ok())
+                return persisted;
+        }
         entry.event = JournalEvent::protocol_rejected;
         entry.outcome = JournalOutcome::rejected;
         const AuthorityBrokerResult appended = append_locked(entry);

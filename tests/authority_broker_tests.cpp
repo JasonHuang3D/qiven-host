@@ -49,6 +49,7 @@ void truncate_file(const std::filesystem::path& path)
 int main()
 {
     const BrokerSessionId session = id<BrokerSessionId>(1);
+    const BrokerSessionId competitor_session = id<BrokerSessionId>(9);
     const ExecutionId execution = id<ExecutionId>(2);
     const LeaseId lease_id = id<LeaseId>(3);
     const OperationId operation = id<OperationId>(4);
@@ -95,6 +96,23 @@ int main()
         require(broker.status().phase == AuthorityPhase::ready);
     }
     remove_root(clean_root);
+
+    const auto quarantine_root = unique_root(L"quarantine");
+    remove_root(quarantine_root);
+    {
+        AuthorityBroker broker(quarantine_root);
+        require(broker.start().ok());
+        const auto acquired = broker.acquire(session, execution, lease_id);
+        require(acquired.ok());
+        require(broker.release(competitor_session, acquired.lease).authority_error == AuthorityError::concurrent_execution);
+        require(broker.status().phase == AuthorityPhase::quarantined);
+    }
+    {
+        AuthorityBroker broker(quarantine_root);
+        require(broker.start().ok());
+        require(broker.status().phase == AuthorityPhase::quarantined);
+    }
+    remove_root(quarantine_root);
 
     const auto partial_root = unique_root(L"partial");
     remove_root(partial_root);
