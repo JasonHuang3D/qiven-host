@@ -76,9 +76,25 @@ TransitionResult AuthorityState::accept(BrokerSessionId session, const Request& 
     in_flight_ = r;
     return {};
 }
-TransitionResult AuthorityState::complete(const Request& r) noexcept
+TransitionResult AuthorityState::complete(BrokerSessionId session, const Request& r) noexcept
 {
-    if (!in_flight_ || in_flight_->operation != r.operation || in_flight_->digest != r.digest)
+    if (!in_flight_)
+        return { AuthorityError::replay_conflict };
+    if (!session_ || *session_ != session)
+    {
+        phase_ = AuthorityPhase::quarantined;
+        return { AuthorityError::concurrent_execution };
+    }
+    if (!execution_ || *execution_ != r.authority.execution)
+    {
+        phase_ = AuthorityPhase::quarantined;
+        return { AuthorityError::concurrent_execution };
+    }
+    if (!lease_ || *lease_ != r.authority.lease)
+        return { AuthorityError::stale_lease };
+    if (epoch_ != r.authority.epoch)
+        return { AuthorityError::stale_fence };
+    if (in_flight_->sequence != r.sequence || in_flight_->operation != r.operation || in_flight_->digest != r.digest)
         return { AuthorityError::replay_conflict };
     if (next_.value == std::numeric_limits<std::uint64_t>::max())
     {

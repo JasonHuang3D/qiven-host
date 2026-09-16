@@ -50,7 +50,7 @@ int main()
     require(state.phase() == AuthorityPhase::leased);
     const Request request { lease, { 1 }, id<OperationId>(4), 9 };
     require(state.accept(sa, request).ok());
-    require(state.complete(request).ok());
+    require(state.complete(sa, request).ok());
     require(state.next_sequence().value == 2);
     require(state.observe_competitor(b).error == AuthorityError::concurrent_execution);
     require(state.phase() == AuthorityPhase::quarantined);
@@ -64,7 +64,7 @@ int main()
     require(cloned.acquire(sa, a, lease.lease).ok());
     require(cloned.accept(sb, request).error == AuthorityError::concurrent_execution);
     require(cloned.phase() == AuthorityPhase::quarantined);
-    require(cloned.complete(request).error == AuthorityError::replay_conflict);
+    require(cloned.complete(sa, request).error == AuthorityError::replay_conflict);
 
     AuthorityState validation { { 4 }, { 11 } };
     const Lease current { a, id<LeaseId>(5), { 11 } };
@@ -79,10 +79,20 @@ int main()
     require(validation.accept(sa, wrong).error == AuthorityError::stale_fence);
     wrong.authority.epoch = { 11 };
     require(validation.accept(sa, wrong).ok());
-    require(validation.complete(wrong).ok());
-    require(validation.accept(sa, wrong).replayed);
-    wrong.operation = id<OperationId>(99);
-    require(validation.accept(sa, wrong).error == AuthorityError::replay_conflict);
+    require(validation.complete(sb, wrong).error == AuthorityError::concurrent_execution);
+    require(validation.phase() == AuthorityPhase::quarantined);
+    require(validation.complete(sa, wrong).ok());
+    require(validation.accept(sa, wrong).error == AuthorityError::quarantined);
+
+    AuthorityState replay { { 4 }, { 12 } };
+    const Lease replay_lease { a, id<LeaseId>(8), { 12 } };
+    require(replay.acquire(sa, a, replay_lease.lease).ok());
+    Request replay_request { replay_lease, { 1 }, id<OperationId>(7), 1 };
+    require(replay.accept(sa, replay_request).ok());
+    require(replay.complete(sa, replay_request).ok());
+    require(replay.accept(sa, replay_request).replayed);
+    replay_request.operation = id<OperationId>(99);
+    require(replay.accept(sa, replay_request).error == AuthorityError::replay_conflict);
 
     AuthorityState in_flight { { 2 }, { 20 } };
     const Lease active { a, id<LeaseId>(10), { 20 } };
@@ -91,7 +101,7 @@ int main()
     require(in_flight.accept(sa, accepted).ok());
     require(in_flight.accept(sb, accepted).error == AuthorityError::concurrent_execution);
     require(in_flight.phase() == AuthorityPhase::quarantined);
-    require(in_flight.complete(accepted).ok());
+    require(in_flight.complete(sa, accepted).ok());
     require(in_flight.accept(sa, { active, { 2 }, id<OperationId>(12), 23 }).error == AuthorityError::quarantined);
 
     AuthorityState atomic { { 3 }, { 30 } };
@@ -116,7 +126,7 @@ int main()
     TestAuthorityAccess::set_next(sequence_overflow, std::numeric_limits<std::uint64_t>::max());
     const Request max_request { max_lease, { std::numeric_limits<std::uint64_t>::max() }, id<OperationId>(19), 3 };
     require(sequence_overflow.accept(sa, max_request).ok());
-    require(sequence_overflow.complete(max_request).error == AuthorityError::sequence_exhausted);
+    require(sequence_overflow.complete(sa, max_request).error == AuthorityError::sequence_exhausted);
     require(sequence_overflow.next_sequence().value == std::numeric_limits<std::uint64_t>::max());
 
     AuthorityState generation_overflow { { std::numeric_limits<std::uint64_t>::max() }, { 60 } };

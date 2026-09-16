@@ -12,6 +12,7 @@ add_library(qiven-host-core STATIC
     src/fence_store.cpp
     src/bounded_journal.cpp
     src/broker_instance_guard.cpp
+    src/authority_broker.cpp
 )
 target_include_directories(qiven-host-core PUBLIC include)
 qiven_target_defaults(qiven-host-core SCOPE PUBLIC FOLDER "Libraries")
@@ -46,5 +47,10 @@ if(QIVEN_HOST_BUILD_TESTS)
         target_link_libraries(qiven-host-broker-instance-tests PRIVATE qiven-host-core)
         qiven_test_target_defaults(qiven-host-broker-instance-tests)
         qiven_register_test(NAME qiven-host-broker-instance-tests TARGET qiven-host-broker-instance-tests)
+
+        add_executable(qiven-host-authority-broker-tests tests/authority_broker_tests.cpp)
+        target_link_libraries(qiven-host-authority-broker-tests PRIVATE qiven-host-core)
+        qiven_test_target_defaults(qiven-host-authority-broker-tests)
+        qiven_register_test(NAME qiven-host-authority-broker-tests TARGET qiven-host-authority-broker-tests)
     endif()
 endif()

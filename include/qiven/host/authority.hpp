@@ -90,6 +90,7 @@ struct TransitionResult final
     }
 };
 
+class AuthorityBroker;
 class TestOwnerPresenceVerifier;
 class TestAuthorityAccess;
 class VerifiedRecoveryAuthorization final
@@ -136,7 +137,7 @@ public:
     }
     TransitionResult acquire(BrokerSessionId session, ExecutionId execution, LeaseId lease) noexcept;
     TransitionResult accept(BrokerSessionId session, const Request& request) noexcept;
-    TransitionResult complete(const Request& request) noexcept;
+    TransitionResult complete(BrokerSessionId session, const Request& request) noexcept;
     TransitionResult release(BrokerSessionId session, const Lease& lease) noexcept;
     TransitionResult disconnect(BrokerSessionId session, const Lease& lease) noexcept;
     TransitionResult observe_competitor(ExecutionId execution) noexcept;
@@ -154,6 +155,7 @@ private:
     std::optional<BrokerSessionId> session_;
     std::optional<Request> in_flight_;
     std::optional<Request> completed_;
+    friend class AuthorityBroker;
     friend class TestAuthorityAccess;
 };
 } // namespace qiven::host

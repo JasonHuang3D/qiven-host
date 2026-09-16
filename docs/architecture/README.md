@@ -7,3 +7,4 @@ Current Batch 000 implementation contracts:
 - `fence-store.md` — durable authority-state substrate and fail-closed fencing persistence.
 - `bounded-journal.md` — bounded durable evidence, integrity chaining, rotation, and corruption semantics.
 - `broker-instance-guard.md` — owner-scoped Windows broker singleton and multiprocess race semantics.
+- `authority-broker.md` — orchestration, persistence ordering, restart conservatism, and persistence-fault latching.
