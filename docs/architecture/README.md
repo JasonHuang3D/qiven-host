@@ -8,3 +8,4 @@ Current Batch 000 implementation contracts:
 - `bounded-journal.md` — bounded durable evidence, integrity chaining, rotation, and corruption semantics.
 - `broker-instance-guard.md` — owner-scoped Windows broker singleton and multiprocess race semantics.
 - `authority-broker.md` — orchestration, persistence ordering, restart conservatism, and persistence-fault latching.
+- `protocol-codec.md` — bounded versioned normal-protocol wire representation and canonical decode rules.

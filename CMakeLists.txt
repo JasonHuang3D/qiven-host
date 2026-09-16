@@ -13,6 +13,7 @@ add_library(qiven-host-core STATIC
     src/bounded_journal.cpp
     src/broker_instance_guard.cpp
     src/authority_broker.cpp
+    src/protocol_codec.cpp
 )
 target_include_directories(qiven-host-core PUBLIC include)
 qiven_target_defaults(qiven-host-core SCOPE PUBLIC FOLDER "Libraries")
@@ -31,6 +32,11 @@ if(QIVEN_HOST_BUILD_TESTS)
     target_link_libraries(qiven-host-core-tests PRIVATE qiven-host-core)
     qiven_test_target_defaults(qiven-host-core-tests)
     qiven_register_test(NAME qiven-host-core-tests TARGET qiven-host-core-tests)
+
+    add_executable(qiven-host-protocol-codec-tests tests/protocol_codec_tests.cpp)
+    target_link_libraries(qiven-host-protocol-codec-tests PRIVATE qiven-host-core)
+    qiven_test_target_defaults(qiven-host-protocol-codec-tests)
+    qiven_register_test(NAME qiven-host-protocol-codec-tests TARGET qiven-host-protocol-codec-tests)
 
     if(WIN32)
         add_executable(qiven-host-fence-store-tests tests/fence_store_tests.cpp)
