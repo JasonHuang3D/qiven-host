@@ -37,6 +37,13 @@ void require(bool value)
         std::abort();
 }
 
+ProtocolFrameView inspect(const ProtocolFrame& frame)
+{
+    ProtocolFrameView view {};
+    require(inspect_protocol_frame(frame.view(), view).ok());
+    return view;
+}
+
 bool nonzero(BrokerSessionId value)
 {
     for (std::uint8_t byte : value.bytes)
