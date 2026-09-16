@@ -114,6 +114,27 @@ int main()
     }
     remove_root(quarantine_root);
 
+    const auto acquire_competitor_root = unique_root(L"acquire-competitor");
+    remove_root(acquire_competitor_root);
+    {
+        AuthorityBroker broker(acquire_competitor_root);
+        require(broker.start().ok());
+        const auto acquired = broker.acquire(session, execution, lease_id);
+        require(acquired.ok());
+        const auto duplicate = broker.acquire(session, execution, id<LeaseId>(30));
+        require(duplicate.status.authority_error == AuthorityError::concurrent_execution);
+        require(broker.status().phase == AuthorityPhase::leased);
+        const auto competitor = broker.acquire(competitor_session, execution, id<LeaseId>(31));
+        require(competitor.status.authority_error == AuthorityError::concurrent_execution);
+        require(broker.status().phase == AuthorityPhase::quarantined);
+    }
+    {
+        AuthorityBroker broker(acquire_competitor_root);
+        require(broker.start().ok());
+        require(broker.status().phase == AuthorityPhase::quarantined);
+    }
+    remove_root(acquire_competitor_root);
+
     const auto partial_root = unique_root(L"partial");
     remove_root(partial_root);
     {

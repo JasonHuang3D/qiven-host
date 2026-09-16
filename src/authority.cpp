@@ -26,7 +26,7 @@ TransitionResult AuthorityState::acquire(BrokerSessionId session, ExecutionId ex
         return { AuthorityError::quarantined };
     if (phase_ == AuthorityPhase::leased)
     {
-        if (execution_ && *execution_ != execution)
+        if (!session_ || *session_ != session || !execution_ || *execution_ != execution)
             phase_ = AuthorityPhase::quarantined;
         return { AuthorityError::concurrent_execution };
     }

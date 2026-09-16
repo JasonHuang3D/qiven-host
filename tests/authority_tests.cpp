@@ -66,6 +66,14 @@ int main()
     require(cloned.phase() == AuthorityPhase::quarantined);
     require(cloned.complete(sa, request).error == AuthorityError::replay_conflict);
 
+    AuthorityState acquire_identity { { 5 }, { 10 } };
+    const LeaseId first_lease = id<LeaseId>(40);
+    require(acquire_identity.acquire(sa, a, first_lease).ok());
+    require(acquire_identity.acquire(sa, a, id<LeaseId>(41)).error == AuthorityError::concurrent_execution);
+    require(acquire_identity.phase() == AuthorityPhase::leased);
+    require(acquire_identity.acquire(sb, a, id<LeaseId>(42)).error == AuthorityError::concurrent_execution);
+    require(acquire_identity.phase() == AuthorityPhase::quarantined);
+
     AuthorityState validation { { 4 }, { 11 } };
     const Lease current { a, id<LeaseId>(5), { 11 } };
     require(validation.acquire(sa, a, current.lease).ok());
