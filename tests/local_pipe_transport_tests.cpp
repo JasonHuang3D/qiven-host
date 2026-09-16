@@ -35,10 +35,17 @@ namespace
 constexpr std::uint32_t test_timeout_ms = 1000;
 constexpr std::uint32_t short_timeout_ms = 100;
 
+[[noreturn]] void fail(const char* reason)
+{
+    std::fprintf(stderr, "[pipe] FAIL: %s\n", reason);
+    std::fflush(stderr);
+    ExitProcess(3);
+}
+
 void require(bool value)
 {
     if (!value)
-        std::abort();
+        fail("requirement");
 }
 
 void stage(const char* name)
@@ -170,6 +177,26 @@ void finish_raw_write(HANDLE handle, RawWrite& write)
     }
     require(CloseHandle(write.overlap.hEvent) != 0);
     write.overlap.hEvent = nullptr;
+}
+
+OwnerPipeClientConnectResult connect_when_listener_available(std::uint32_t timeout_ms)
+{
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    for (;;)
+    {
+        auto connected = connect_owner_pipe_client();
+        if (connected.ok())
+            return connected;
+        if (connected.status.error != LocalPipeError::busy)
+        {
+            std::fprintf(stderr, "[pipe] unexpected connect error=%u native=%u\n",
+                         static_cast<unsigned>(connected.status.error), connected.status.native_error);
+            fail("replacement client connection");
+        }
+        if (GetTickCount64() >= deadline)
+            fail("replacement client remained busy past deadline");
+        Sleep(1);
+    }
 }
 } // namespace
 
@@ -307,9 +334,8 @@ int main()
     LocalPipeAcceptResult replacement_accept {};
     std::thread replacement_thread([&] { replacement_accept = server.accept(oversized_slot, test_timeout_ms); });
     stage("[pipe] retire-reuse:connect-client");
-    auto replacement_connected = connect_owner_pipe_client();
+    auto replacement_connected = connect_when_listener_available(test_timeout_ms);
     stage("[pipe] retire-reuse:client-returned");
-    require(replacement_connected.ok());
     OwnerPipeClient replacement = std::move(replacement_connected.client);
     stage("[pipe] retire-reuse:join");
     replacement_thread.join();
@@ -332,7 +358,7 @@ int main()
     stage("[pipe] silent-timeout");
     LocalPipeAcceptResult silent_accept {};
     std::thread silent_thread([&] { silent_accept = server.accept(oversized_slot, test_timeout_ms); });
-    auto silent_connected = connect_owner_pipe_client();
+    auto silent_connected = connect_when_listener_available(test_timeout_ms);
     require(silent_connected.ok());
     OwnerPipeClient silent = std::move(silent_connected.client);
     silent_thread.join();
