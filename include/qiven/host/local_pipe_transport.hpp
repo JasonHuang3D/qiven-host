@@ -11,6 +11,7 @@
 namespace qiven::host
 {
 inline constexpr std::size_t owner_pipe_max_connections = 4;
+inline constexpr std::uint32_t owner_pipe_default_timeout_ms = 5000;
 
 enum class LocalPipeError : std::uint8_t
 {
@@ -29,6 +30,7 @@ enum class LocalPipeError : std::uint8_t
     not_available,
     busy,
     random_failure,
+    timeout,
     invalid_frame,
     empty_message,
     message_too_large,
@@ -74,10 +76,12 @@ public:
     OwnerPipeServer(OwnerPipeServer&& other) noexcept;
     OwnerPipeServer& operator=(OwnerPipeServer&& other) noexcept;
 
-    LocalPipeAcceptResult accept(std::size_t slot) noexcept;
+    LocalPipeAcceptResult accept(std::size_t slot, std::uint32_t timeout_ms = owner_pipe_default_timeout_ms) noexcept;
     LocalPipeResult session(std::size_t slot, BrokerSessionId& output) const noexcept;
-    LocalPipeResult read_frame(std::size_t slot, ProtocolFrame& output) noexcept;
-    LocalPipeResult write_frame(std::size_t slot, const ProtocolFrame& frame) noexcept;
+    LocalPipeResult read_frame(std::size_t slot, ProtocolFrame& output,
+                               std::uint32_t timeout_ms = owner_pipe_default_timeout_ms) noexcept;
+    LocalPipeResult write_frame(std::size_t slot, const ProtocolFrame& frame,
+                                std::uint32_t timeout_ms = owner_pipe_default_timeout_ms) noexcept;
     LocalPipeResult disconnect(std::size_t slot) noexcept;
     LocalPipeResult retire(std::size_t slot) noexcept;
     void reset() noexcept;
@@ -136,8 +140,9 @@ public:
     OwnerPipeClient(OwnerPipeClient&& other) noexcept;
     OwnerPipeClient& operator=(OwnerPipeClient&& other) noexcept;
 
-    LocalPipeResult read_frame(ProtocolFrame& output) noexcept;
-    LocalPipeResult write_frame(const ProtocolFrame& frame) noexcept;
+    LocalPipeResult read_frame(ProtocolFrame& output, std::uint32_t timeout_ms = owner_pipe_default_timeout_ms) noexcept;
+    LocalPipeResult write_frame(const ProtocolFrame& frame,
+                                std::uint32_t timeout_ms = owner_pipe_default_timeout_ms) noexcept;
     void reset() noexcept;
 
     explicit operator bool() const noexcept

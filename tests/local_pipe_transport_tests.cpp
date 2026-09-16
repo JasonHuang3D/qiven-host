@@ -31,6 +31,9 @@ public:
 
 namespace
 {
+constexpr std::uint32_t test_timeout_ms = 1000;
+constexpr std::uint32_t short_timeout_ms = 100;
+
 void require(bool value)
 {
     if (!value)
@@ -86,7 +89,7 @@ std::wstring pipe_name(std::wstring_view sid)
 HANDLE connect_raw(const std::wstring& name, DWORD extra_access = 0)
 {
     HANDLE handle = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE | extra_access, 0, nullptr, OPEN_EXISTING,
-                                SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
+                                FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
     require(handle != INVALID_HANDLE_VALUE);
     DWORD mode = PIPE_READMODE_MESSAGE;
     require(SetNamedPipeHandleState(handle, &mode, nullptr, nullptr) != 0);
@@ -125,11 +128,48 @@ void verify_owner_only_dacl(HANDLE handle, std::wstring_view expected_owner)
     require((ace->Mask & GENERIC_ALL) != 0 || (ace->Mask & FILE_ALL_ACCESS) == FILE_ALL_ACCESS);
     LocalFree(descriptor);
 }
+
+struct RawWrite final
+{
+    OVERLAPPED overlap {};
+    DWORD immediate_bytes {};
+    bool immediate {};
+};
+
+RawWrite start_raw_write(HANDLE handle, const void* data, DWORD size)
+{
+    RawWrite result;
+    result.overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    require(result.overlap.hEvent != nullptr);
+    result.immediate = WriteFile(handle, data, size, &result.immediate_bytes, &result.overlap) != 0;
+    if (!result.immediate)
+        require(GetLastError() == ERROR_IO_PENDING);
+    return result;
+}
+
+void finish_raw_write(HANDLE handle, RawWrite& write)
+{
+    if (!write.immediate)
+    {
+        DWORD wait = WaitForSingleObject(write.overlap.hEvent, test_timeout_ms);
+        if (wait == WAIT_TIMEOUT)
+        {
+            CancelIoEx(handle, &write.overlap);
+            wait = WaitForSingleObject(write.overlap.hEvent, test_timeout_ms);
+        }
+        require(wait == WAIT_OBJECT_0);
+        DWORD bytes = 0;
+        GetOverlappedResult(handle, &write.overlap, &bytes, FALSE);
+    }
+    require(CloseHandle(write.overlap.hEvent) != 0);
+    write.overlap.hEvent = nullptr;
+}
 } // namespace
 
 int main()
 {
     static_assert(owner_pipe_max_connections == 4);
+    static_assert(owner_pipe_default_timeout_ms == 5000);
 
     const std::wstring owner_sid = current_user_sid_text();
     const std::wstring name = pipe_name(owner_sid);
@@ -142,10 +182,13 @@ int main()
     require(!duplicate.ok());
     require(duplicate.status.error == LocalPipeError::create_failure);
 
+    const auto accept_timeout = server.accept(0, short_timeout_ms);
+    require(accept_timeout.status.error == LocalPipeError::timeout);
+
     std::array<LocalPipeAcceptResult, owner_pipe_max_connections> accepted {};
     std::array<std::thread, owner_pipe_max_connections> accept_threads;
     for (std::size_t slot = 0; slot != owner_pipe_max_connections; ++slot)
-        accept_threads[slot] = std::thread([&server, &accepted, slot] { accepted[slot] = server.accept(slot); });
+        accept_threads[slot] = std::thread([&server, &accepted, slot] { accepted[slot] = server.accept(slot, test_timeout_ms); });
 
     HANDLE raw = connect_raw(name, READ_CONTROL);
     verify_owner_only_dacl(raw, owner_sid);
@@ -180,13 +223,10 @@ int main()
     ProtocolFrame query_frame {};
     require(encode_protocol_message(query, query_frame).ok());
     for (OwnerPipeClient& client : clients)
-        require(client.write_frame(query_frame).ok());
+        require(client.write_frame(query_frame, test_timeout_ms).ok());
 
     std::array<std::byte, protocol_max_frame_size + 1> oversized {};
-    DWORD raw_written = 0;
-    std::thread raw_writer([&] {
-        WriteFile(raw, oversized.data(), static_cast<DWORD>(oversized.size()), &raw_written, nullptr);
-    });
+    RawWrite raw_write = start_raw_write(raw, oversized.data(), static_cast<DWORD>(oversized.size()));
 
     std::size_t oversized_slot = owner_pipe_max_connections;
     std::array<bool, owner_pipe_max_connections> readable {};
@@ -194,7 +234,7 @@ int main()
     {
         ProtocolFrame frame {};
         frame.size = 13;
-        const LocalPipeResult read = server.read_frame(slot, frame);
+        const LocalPipeResult read = server.read_frame(slot, frame, test_timeout_ms);
         if (read.error == LocalPipeError::message_too_large)
         {
             require(oversized_slot == owner_pipe_max_connections);
@@ -208,7 +248,7 @@ int main()
         require(view.kind == ProtocolMessageKind::query_status_request);
         readable[slot] = true;
     }
-    raw_writer.join();
+    finish_raw_write(raw, raw_write);
     require(oversized_slot < owner_pipe_max_connections);
     CloseHandle(raw);
 
@@ -225,12 +265,12 @@ int main()
     for (std::size_t slot = 0; slot != owner_pipe_max_connections; ++slot)
     {
         if (readable[slot])
-            require(server.write_frame(slot, response).ok());
+            require(server.write_frame(slot, response, test_timeout_ms).ok());
     }
     for (OwnerPipeClient& client : clients)
     {
         ProtocolFrame received {};
-        require(client.read_frame(received).ok());
+        require(client.read_frame(received, test_timeout_ms).ok());
         QueryStatusResponseMessage decoded {};
         require(decode_protocol_message(inspect(received), decoded).ok());
         require(decoded.result == ProtocolResultCode::ok && decoded.started);
@@ -240,7 +280,7 @@ int main()
     BrokerSessionId preserved {};
     require(server.session(oversized_slot, preserved).ok());
     require(preserved == oversized_session);
-    require(server.accept(oversized_slot).status.error == LocalPipeError::retirement_required);
+    require(server.accept(oversized_slot, short_timeout_ms).status.error == LocalPipeError::retirement_required);
     require(server.retire(oversized_slot).ok());
     BrokerSessionId sentinel {};
     sentinel.bytes[0] = 99;
@@ -248,7 +288,7 @@ int main()
     require(sentinel.bytes[0] == 99);
 
     LocalPipeAcceptResult replacement_accept {};
-    std::thread replacement_thread([&] { replacement_accept = server.accept(oversized_slot); });
+    std::thread replacement_thread([&] { replacement_accept = server.accept(oversized_slot, test_timeout_ms); });
     auto replacement_connected = connect_owner_pipe_client();
     require(replacement_connected.ok());
     OwnerPipeClient replacement = std::move(replacement_connected.client);
@@ -259,17 +299,35 @@ int main()
 
     replacement.reset();
     ProtocolFrame ignored {};
-    const LocalPipeResult disconnected = server.read_frame(oversized_slot, ignored);
+    const LocalPipeResult disconnected = server.read_frame(oversized_slot, ignored, test_timeout_ms);
     require(disconnected.error == LocalPipeError::disconnected);
     BrokerSessionId disconnect_session {};
     require(server.session(oversized_slot, disconnect_session).ok());
     require(disconnect_session == replacement_accept.session);
-    require(server.accept(oversized_slot).status.error == LocalPipeError::retirement_required);
+    require(server.accept(oversized_slot, short_timeout_ms).status.error == LocalPipeError::retirement_required);
     require(server.retire(oversized_slot).ok());
+
+    LocalPipeAcceptResult silent_accept {};
+    std::thread silent_thread([&] { silent_accept = server.accept(oversized_slot, test_timeout_ms); });
+    auto silent_connected = connect_owner_pipe_client();
+    require(silent_connected.ok());
+    OwnerPipeClient silent = std::move(silent_connected.client);
+    silent_thread.join();
+    require(silent_accept.ok());
+    ProtocolFrame silent_output {};
+    silent_output.size = 31;
+    const auto silent_timeout = server.read_frame(oversized_slot, silent_output, short_timeout_ms);
+    require(silent_timeout.error == LocalPipeError::timeout);
+    require(silent_output.size == 31);
+    BrokerSessionId silent_preserved {};
+    require(server.session(oversized_slot, silent_preserved).ok());
+    require(silent_preserved == silent_accept.session);
+    require(server.retire(oversized_slot).ok());
+    silent.reset();
 
     ProtocolFrame invalid {};
     invalid.size = static_cast<std::uint16_t>(protocol_max_frame_size + 1);
-    require(clients[0].write_frame(invalid).error == LocalPipeError::invalid_frame);
+    require(clients[0].write_frame(invalid, test_timeout_ms).error == LocalPipeError::invalid_frame);
 
     std::size_t poison_slot = owner_pipe_max_connections;
     for (std::size_t slot = 0; slot != owner_pipe_max_connections; ++slot)
@@ -288,14 +346,14 @@ int main()
 
     ProtocolFrame poison_output {};
     poison_output.size = 23;
-    const LocalPipeResult poisoned = server.read_frame(poison_slot, poison_output);
+    const LocalPipeResult poisoned = server.read_frame(poison_slot, poison_output, short_timeout_ms);
     require(poisoned.error == LocalPipeError::transport_poisoned);
     require(poison_output.size == 23);
     BrokerSessionId poison_preserved {};
     require(server.session(poison_slot, poison_preserved).ok());
     require(poison_preserved == poison_session);
     require(server.retire(poison_slot).error == LocalPipeError::transport_poisoned);
-    require(server.accept(poison_slot).status.error == LocalPipeError::transport_poisoned);
+    require(server.accept(poison_slot, short_timeout_ms).status.error == LocalPipeError::transport_poisoned);
 
     return 0;
 }
