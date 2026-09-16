@@ -219,16 +219,25 @@ PendingIoResult wait_pending_io(HANDLE handle, OVERLAPPED& overlap, std::uint32_
         const BOOL cancelled = CancelIoEx(handle, &overlap);
         const DWORD cancel_error = cancelled == 0 ? GetLastError() : ERROR_SUCCESS;
 
-        // OVERLAPPED is stack-owned. Cancellation is followed by completion drain so the
-        // kernel cannot later write through storage that has left scope. The peer wait is
-        // bounded by timeout_ms; this drain is kernel-completion safety after cancellation.
+        if (cancelled == 0 && cancel_error == ERROR_NOT_FOUND)
+        {
+            // The operation may have completed in the race between the previous
+            // GetOverlappedResult and CancelIoEx. Re-read completion before waiting.
+            bytes = 0;
+            if (GetOverlappedResult(handle, &overlap, &bytes, FALSE) != 0)
+                return { false, ERROR_SUCCESS, bytes };
+            const DWORD raced_error = GetLastError();
+            if (raced_error != ERROR_IO_INCOMPLETE)
+                return { false, raced_error, bytes };
+        }
+
+        // OVERLAPPED is stack-owned. Once cancellation was requested (or the
+        // ERROR_NOT_FOUND race still reports incomplete), completion must be drained
+        // before storage leaves scope.
         WaitForSingleObject(overlap.hEvent, INFINITE);
         bytes = 0;
         const BOOL completed = GetOverlappedResult(handle, &overlap, &bytes, FALSE);
         const DWORD final_error = completed != 0 ? ERROR_SUCCESS : GetLastError();
-
-        if (cancelled == 0 && cancel_error == ERROR_NOT_FOUND)
-            return { false, final_error, bytes };
         return { true, final_error, bytes };
     }
 

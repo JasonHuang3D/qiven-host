@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -38,6 +39,12 @@ void require(bool value)
 {
     if (!value)
         std::abort();
+}
+
+void stage(const char* name)
+{
+    std::puts(name);
+    std::fflush(stdout);
 }
 
 ProtocolFrameView inspect(const ProtocolFrame& frame)
@@ -171,6 +178,7 @@ int main()
     static_assert(owner_pipe_max_connections == 4);
     static_assert(owner_pipe_default_timeout_ms == 5000);
 
+    stage("[pipe] create");
     const std::wstring owner_sid = current_user_sid_text();
     const std::wstring name = pipe_name(owner_sid);
 
@@ -182,9 +190,11 @@ int main()
     require(!duplicate.ok());
     require(duplicate.status.error == LocalPipeError::create_failure);
 
+    stage("[pipe] accept-timeout");
     const auto accept_timeout = server.accept(0, short_timeout_ms);
     require(accept_timeout.status.error == LocalPipeError::timeout);
 
+    stage("[pipe] four-connect");
     std::array<LocalPipeAcceptResult, owner_pipe_max_connections> accepted {};
     std::array<std::thread, owner_pipe_max_connections> accept_threads;
     for (std::size_t slot = 0; slot != owner_pipe_max_connections; ++slot)
@@ -215,16 +225,19 @@ int main()
             require(accepted[slot].session != accepted[prior].session);
     }
 
+    stage("[pipe] saturation");
     auto saturated = connect_owner_pipe_client();
     require(!saturated.ok());
     require(saturated.status.error == LocalPipeError::busy);
 
+    stage("[pipe] request-read");
     QueryStatusRequestMessage query {};
     ProtocolFrame query_frame {};
     require(encode_protocol_message(query, query_frame).ok());
     for (OwnerPipeClient& client : clients)
         require(client.write_frame(query_frame, test_timeout_ms).ok());
 
+    stage("[pipe] oversized");
     std::array<std::byte, protocol_max_frame_size + 1> oversized {};
     RawWrite raw_write = start_raw_write(raw, oversized.data(), static_cast<DWORD>(oversized.size()));
 
@@ -252,6 +265,7 @@ int main()
     require(oversized_slot < owner_pipe_max_connections);
     CloseHandle(raw);
 
+    stage("[pipe] response-roundtrip");
     QueryStatusResponseMessage status {};
     status.result = ProtocolResultCode::ok;
     status.started = true;
@@ -276,6 +290,7 @@ int main()
         require(decoded.result == ProtocolResultCode::ok && decoded.started);
     }
 
+    stage("[pipe] retire-reuse");
     const BrokerSessionId oversized_session = accepted[oversized_slot].session;
     BrokerSessionId preserved {};
     require(server.session(oversized_slot, preserved).ok());
@@ -297,6 +312,7 @@ int main()
     require(nonzero(replacement_accept.session));
     require(replacement_accept.session != oversized_session);
 
+    stage("[pipe] peer-disconnect");
     replacement.reset();
     ProtocolFrame ignored {};
     const LocalPipeResult disconnected = server.read_frame(oversized_slot, ignored, test_timeout_ms);
@@ -307,6 +323,7 @@ int main()
     require(server.accept(oversized_slot, short_timeout_ms).status.error == LocalPipeError::retirement_required);
     require(server.retire(oversized_slot).ok());
 
+    stage("[pipe] silent-timeout");
     LocalPipeAcceptResult silent_accept {};
     std::thread silent_thread([&] { silent_accept = server.accept(oversized_slot, test_timeout_ms); });
     auto silent_connected = connect_owner_pipe_client();
@@ -325,10 +342,12 @@ int main()
     require(server.retire(oversized_slot).ok());
     silent.reset();
 
+    stage("[pipe] invalid-frame");
     ProtocolFrame invalid {};
     invalid.size = static_cast<std::uint16_t>(protocol_max_frame_size + 1);
     require(clients[0].write_frame(invalid, test_timeout_ms).error == LocalPipeError::invalid_frame);
 
+    stage("[pipe] poison");
     std::size_t poison_slot = owner_pipe_max_connections;
     for (std::size_t slot = 0; slot != owner_pipe_max_connections; ++slot)
     {
@@ -355,5 +374,6 @@ int main()
     require(server.retire(poison_slot).error == LocalPipeError::transport_poisoned);
     require(server.accept(poison_slot, short_timeout_ms).status.error == LocalPipeError::transport_poisoned);
 
+    stage("[pipe] done");
     return 0;
 }
