@@ -296,18 +296,24 @@ int main()
     require(server.session(oversized_slot, preserved).ok());
     require(preserved == oversized_session);
     require(server.accept(oversized_slot, short_timeout_ms).status.error == LocalPipeError::retirement_required);
+    stage("[pipe] retire-reuse:retire");
     require(server.retire(oversized_slot).ok());
     BrokerSessionId sentinel {};
     sentinel.bytes[0] = 99;
     require(server.session(oversized_slot, sentinel).error == LocalPipeError::not_connected);
     require(sentinel.bytes[0] == 99);
 
+    stage("[pipe] retire-reuse:start-accept");
     LocalPipeAcceptResult replacement_accept {};
     std::thread replacement_thread([&] { replacement_accept = server.accept(oversized_slot, test_timeout_ms); });
+    stage("[pipe] retire-reuse:connect-client");
     auto replacement_connected = connect_owner_pipe_client();
+    stage("[pipe] retire-reuse:client-returned");
     require(replacement_connected.ok());
     OwnerPipeClient replacement = std::move(replacement_connected.client);
+    stage("[pipe] retire-reuse:join");
     replacement_thread.join();
+    stage("[pipe] retire-reuse:joined");
     require(replacement_accept.ok());
     require(nonzero(replacement_accept.session));
     require(replacement_accept.session != oversized_session);
