@@ -15,6 +15,7 @@ add_library(qiven-host-core STATIC
     src/authority_broker.cpp
     src/protocol_codec.cpp
     src/local_pipe_transport.cpp
+    src/protocol_dispatcher.cpp
 )
 target_include_directories(qiven-host-core PUBLIC include)
 qiven_target_defaults(qiven-host-core SCOPE PUBLIC FOLDER "Libraries")
@@ -65,5 +66,11 @@ if(QIVEN_HOST_BUILD_TESTS)
         qiven_test_target_defaults(qiven-host-local-pipe-tests)
         qiven_register_test(NAME qiven-host-local-pipe-tests TARGET qiven-host-local-pipe-tests)
         set_tests_properties(qiven-host-local-pipe-tests PROPERTIES TIMEOUT 20)
+
+        add_executable(qiven-host-protocol-dispatcher-tests tests/protocol_dispatcher_tests.cpp)
+        target_link_libraries(qiven-host-protocol-dispatcher-tests PRIVATE qiven-host-core)
+        qiven_test_target_defaults(qiven-host-protocol-dispatcher-tests)
+        qiven_register_test(NAME qiven-host-protocol-dispatcher-tests TARGET qiven-host-protocol-dispatcher-tests)
+        set_tests_properties(qiven-host-protocol-dispatcher-tests PROPERTIES TIMEOUT 20)
     endif()
 endif()

@@ -10,3 +10,4 @@ Current Batch 000 implementation contracts:
 - `authority-broker.md` — orchestration, persistence ordering, restart conservatism, and persistence-fault latching.
 - `protocol-codec.md` — bounded versioned normal-protocol wire representation and canonical decode rules.
 - `local-pipe-transport.md` — owner-only bounded Windows named-pipe transport and Host-owned connection-session lifecycle.
+- `protocol-dispatcher.md` — Host-issued lease generation, explicit result mapping, protected `NoOp`, replay digesting, and authority-aware connection close.
