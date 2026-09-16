@@ -4,7 +4,7 @@ This Batch 000 checkpoint connects the already-accepted bounded V1 codec and own
 
 ## Boundary
 
-`ProtocolDispatcher` consumes one complete `ProtocolFrame` together with the Host-owned `BrokerSessionId` that the transport assigned to the accepted connection. The session identity is never decoded from the wire. The dispatcher supports only the normal V1 request kinds already frozen by the codec:
+`ProtocolDispatcher` consumes one complete `ProtocolFrame` from a concrete `OwnerPipeServer` slot. While holding its lifecycle gate, it reads the Host-owned `BrokerSessionId` that the transport assigned to that accepted connection. The session identity is never accepted as a dispatcher argument and is never decoded from the wire. The dispatcher supports only the normal V1 request kinds already frozen by the codec:
 
 - `Acquire`;
 - `ExecuteTestOperation` with the sole V1 operation code `NoOp`;
@@ -15,6 +15,14 @@ Response message kinds received from a client are rejected as unexpected request
 
 This checkpoint still does not implement Runtime/DCR adapters, filesystem/Git/process mutation, owner recovery, normal-protocol `Reconcile`, or any production mutation path.
 
+## Dispatch/close lifecycle serialization
+
+Transport retirement and authority dispatch are one lifecycle domain. Batch 000 therefore serializes all `ProtocolDispatcher::dispatch` and `ProtocolDispatcher::close_connection` calls through one dispatcher-owned lifecycle mutex. This conservative global serialization is intentional and matches ADR-0026's initial global single-writer/read-serialization model; it is not a permanent throughput claim.
+
+The dispatcher resolves the current Host-owned session from `(server, slot)` only after acquiring that lifecycle gate. A caller cannot supply a stale/copied session identity directly. If close wins the lifecycle gate first, it disconnects and retires the transport slot before releasing the gate; a later stale frame then fails transport-session lookup and cannot acquire authority. If dispatch wins first, successful Acquire and the corresponding active-lease tracking become visible before close can run, so close performs authority-side disconnect before slot reuse.
+
+The accepted transport still owns pipe I/O and permits only one active read/write flow per connected slot. The server loop must route accepted-frame dispatch and connection close through this dispatcher lifecycle surface rather than calling transport retirement directly around it.
+
 ## Host-issued lease
 
 The client supplies `ExecutionId` plus bounded scope/intent metadata on `Acquire`; it never supplies a lease. The dispatcher generates a fresh nonzero 128-bit `LeaseId` using the Windows system-preferred CSPRNG and passes it, together with the transport-owned `BrokerSessionId`, to `AuthorityBroker::acquire`.
@@ -22,6 +30,8 @@ The client supplies `ExecutionId` plus bounded scope/intent metadata on `Acquire
 A successful acquire response returns the Host-issued lease and the current generation/fencing epoch. Failed acquire responses use only the stable `ProtocolResultCode` vocabulary and keep success-only fields zero. Native/broker enum values are never copied to the wire.
 
 Lease generation remains local to this isolated dispatcher checkpoint. Refactoring the already-accepted transport CSPRNG helper into broader shared infrastructure is not required to prove dispatcher semantics and would unnecessarily modify the previously accepted transport implementation in this checkpoint.
+
+The bounded scope/intent fields are carried by the frozen V1 Acquire wire contract but this dispatcher checkpoint does not yet add them to durable journal records. ADR-0026's bounded audit-metadata requirement remains a Batch 000 acceptance item and must be closed before Batch 000 as a whole is accepted; it is not silently considered satisfied by this checkpoint.
 
 ## Explicit result mapping
 
@@ -33,9 +43,9 @@ An authority rejection is not a dispatcher execution failure when a canonical pr
 
 `ExecuteTestOperation(NoOp)` is the first protected end-to-end operation. The dispatcher:
 
-1. validates and decodes the canonical V1 frame;
-2. reconstructs the `Lease` from decoded execution/lease/fence fields;
-3. injects the Host-owned connection `BrokerSessionId` out-of-band;
+1. verifies the current transport slot/session under the lifecycle gate;
+2. validates and decodes the canonical V1 frame;
+3. injects the exact Host-owned connection `BrokerSessionId` out-of-band;
 4. derives the authority replay digest from the canonical decoded payload bytes rather than accepting a caller-selected digest field;
 5. calls `AuthorityBroker::begin_operation`;
 6. performs the protected `NoOp` only after admission succeeds;
@@ -56,7 +66,7 @@ A successful `Release` clears the dispatcher's in-memory active lease tracking o
 
 Transport slot reuse is coordinated through `ProtocolDispatcher::close_connection` rather than by calling `OwnerPipeServer::retire` directly for a session that may own authority.
 
-The close path:
+The close path, under the same lifecycle gate used by dispatch:
 
 1. reads the preserved Host-owned session from the transport slot;
 2. asks the transport to disconnect / enter `Retiring` (an already-retiring slot is accepted; a poisoned slot remains poisoned);
@@ -79,6 +89,7 @@ The Windows dispatcher acceptance test exercises real owner-pipe transport plus 
 - replay conflict and sequence-gap rejection;
 - successful Release;
 - client loss with authority-aware close causing `Reconciling` before slot reuse;
+- a frame read from a connection that is then closed/retired before dispatch, proving stale post-close dispatch is rejected and cannot obtain authority;
 - two distinct Host-owned pipe sessions presenting the same client-controlled `ExecutionId`, with the second Acquire rejected and authority moved to `Quarantined`;
 - cleanup of both transport sessions without weakening the quarantined authority state.
 

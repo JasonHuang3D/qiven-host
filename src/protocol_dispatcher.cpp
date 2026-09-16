@@ -160,6 +160,15 @@ ProtocolDispatchResult encode_failure(ProtocolCodecError error) noexcept
     return result;
 }
 
+ProtocolDispatchResult transport_failure(LocalPipeResult status) noexcept
+{
+    ProtocolDispatchResult result {};
+    result.error = ProtocolDispatchError::transport_failure;
+    result.transport_error = status.error;
+    result.native_error = status.native_error;
+    return result;
+}
+
 template <class Message>
 ProtocolDispatchResult encode_response(const Message& message, ProtocolFrame& output) noexcept
 {
@@ -182,9 +191,16 @@ OperationOutcome execute_no_op() noexcept
 }
 } // namespace
 
-ProtocolDispatchResult ProtocolDispatcher::dispatch(BrokerSessionId session, const ProtocolFrame& request,
-                                                     ProtocolFrame& response) noexcept
+ProtocolDispatchResult ProtocolDispatcher::dispatch(OwnerPipeServer& server, std::size_t slot,
+                                                     const ProtocolFrame& request, ProtocolFrame& response) noexcept
 {
+    std::lock_guard lifecycle_lock(lifecycle_mutex_);
+
+    BrokerSessionId session {};
+    const LocalPipeResult session_status = server.session(slot, session);
+    if (!session_status.ok())
+        return transport_failure(session_status);
+
     ProtocolFrameView frame {};
     const ProtocolCodecResult inspected = inspect_protocol_frame(request.view(), frame);
     if (!inspected.ok())
@@ -238,10 +254,7 @@ ProtocolDispatchResult ProtocolDispatcher::dispatch(BrokerSessionId session, con
             return encode_failure(encoded.error);
         }
 
-        {
-            std::lock_guard lock(lease_mutex_);
-            active_lease_ = ActiveLease { session, acquired.lease };
-        }
+        active_lease_ = ActiveLease { session, acquired.lease };
         response = candidate;
         return {};
     }
@@ -285,12 +298,9 @@ ProtocolDispatchResult ProtocolDispatcher::dispatch(BrokerSessionId session, con
 
         const Lease lease { message.execution, message.lease, message.epoch };
         const AuthorityBrokerResult released = broker_.release(session, lease);
-        if (released.ok())
-        {
-            std::lock_guard lock(lease_mutex_);
-            if (active_lease_ && active_lease_->session == session && same_lease(active_lease_->lease, lease))
-                active_lease_.reset();
-        }
+        if (released.ok() && active_lease_ && active_lease_->session == session &&
+            same_lease(active_lease_->lease, lease))
+            active_lease_.reset();
 
         ReleaseResponseMessage reply {};
         reply.result = protocol_result(released);
@@ -340,25 +350,18 @@ ProtocolDispatchResult ProtocolDispatcher::dispatch(BrokerSessionId session, con
 
 ProtocolDispatchResult ProtocolDispatcher::close_connection(OwnerPipeServer& server, std::size_t slot) noexcept
 {
+    std::lock_guard lifecycle_lock(lifecycle_mutex_);
+
     BrokerSessionId session {};
     const LocalPipeResult session_status = server.session(slot, session);
     if (!session_status.ok())
-    {
-        ProtocolDispatchResult result {};
-        result.error = ProtocolDispatchError::transport_failure;
-        result.transport_error = session_status.error;
-        result.native_error = session_status.native_error;
-        return result;
-    }
+        return transport_failure(session_status);
 
     const LocalPipeResult transport_disconnect = server.disconnect(slot);
 
     std::optional<Lease> lease;
-    {
-        std::lock_guard lock(lease_mutex_);
-        if (active_lease_ && active_lease_->session == session)
-            lease = active_lease_->lease;
-    }
+    if (active_lease_ && active_lease_->session == session)
+        lease = active_lease_->lease;
 
     if (lease)
     {
@@ -380,29 +383,16 @@ ProtocolDispatchResult ProtocolDispatcher::close_connection(OwnerPipeServer& ser
             return result;
         }
 
-        std::lock_guard lock(lease_mutex_);
         if (active_lease_ && active_lease_->session == session && same_lease(active_lease_->lease, *lease))
             active_lease_.reset();
     }
 
     if (!transport_disconnect.ok())
-    {
-        ProtocolDispatchResult result {};
-        result.error = ProtocolDispatchError::transport_failure;
-        result.transport_error = transport_disconnect.error;
-        result.native_error = transport_disconnect.native_error;
-        return result;
-    }
+        return transport_failure(transport_disconnect);
 
     const LocalPipeResult retired = server.retire(slot);
     if (!retired.ok())
-    {
-        ProtocolDispatchResult result {};
-        result.error = ProtocolDispatchError::transport_failure;
-        result.transport_error = retired.error;
-        result.native_error = retired.native_error;
-        return result;
-    }
+        return transport_failure(retired);
     return {};
 }
 } // namespace qiven::host

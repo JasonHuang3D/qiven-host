@@ -49,7 +49,10 @@ public:
     ProtocolDispatcher(ProtocolDispatcher&&) = delete;
     ProtocolDispatcher& operator=(ProtocolDispatcher&&) = delete;
 
-    ProtocolDispatchResult dispatch(BrokerSessionId session, const ProtocolFrame& request,
+    // Dispatch and close are one lifecycle domain. The dispatcher derives the
+    // Host-owned BrokerSessionId from the current transport slot while holding
+    // the lifecycle gate, so a retired connection cannot later dispatch a stale frame.
+    ProtocolDispatchResult dispatch(OwnerPipeServer& server, std::size_t slot, const ProtocolFrame& request,
                                     ProtocolFrame& response) noexcept;
 
     // Establishes the transport Retiring boundary, performs any required authority-side
@@ -64,7 +67,9 @@ private:
     };
 
     AuthorityBroker& broker_;
-    std::mutex lease_mutex_;
+    // Batch 000 intentionally serializes dispatcher lifecycle work globally. This is
+    // conservative and matches the initial global single-writer/read-serialization model.
+    std::mutex lifecycle_mutex_;
     std::optional<ActiveLease> active_lease_;
 };
 } // namespace qiven::host

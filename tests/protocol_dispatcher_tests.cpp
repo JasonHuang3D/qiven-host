@@ -118,7 +118,7 @@ ProtocolFrame exchange(Connection& connection, OwnerPipeServer& server, Protocol
     require(server.read_frame(connection.slot, received_request, io_timeout_ms).ok(), "server read request");
 
     ProtocolFrame response {};
-    require(dispatcher.dispatch(connection.session, received_request, response).ok(), "dispatch request");
+    require(dispatcher.dispatch(server, connection.slot, received_request, response).ok(), "dispatch request");
     require(server.write_frame(connection.slot, response, io_timeout_ms).ok(), "server write response");
 
     ProtocolFrame received_response {};
@@ -126,8 +126,7 @@ ProtocolFrame exchange(Connection& connection, OwnerPipeServer& server, Protocol
     return received_response;
 }
 
-AcquireResponseMessage acquire(Connection& connection, OwnerPipeServer& server, ProtocolDispatcher& dispatcher,
-                               ExecutionId execution)
+ProtocolFrame encode_acquire(ExecutionId execution)
 {
     AcquireRequestMessage request {};
     request.execution = execution;
@@ -140,6 +139,13 @@ AcquireResponseMessage acquire(Connection& connection, OwnerPipeServer& server, 
 
     ProtocolFrame encoded {};
     require(encode_protocol_message(request, encoded).ok(), "encode acquire");
+    return encoded;
+}
+
+AcquireResponseMessage acquire(Connection& connection, OwnerPipeServer& server, ProtocolDispatcher& dispatcher,
+                               ExecutionId execution)
+{
+    const ProtocolFrame encoded = encode_acquire(execution);
     const ProtocolFrame response_frame = exchange(connection, server, dispatcher, encoded);
     AcquireResponseMessage response {};
     require(decode_protocol_message(inspect(response_frame), response).ok(), "decode acquire response");
@@ -267,6 +273,33 @@ void disconnect_flow(const std::filesystem::path& root)
     require(timeout.status.error == LocalPipeError::timeout, "retired slot returned to listening");
 }
 
+void stale_frame_after_close_flow(const std::filesystem::path& root)
+{
+    AuthorityBroker broker(root);
+    require(broker.start().ok(), "start stale-frame broker");
+    auto created = create_owner_pipe_server();
+    require(created.ok(), "create stale-frame pipe server");
+    OwnerPipeServer server = std::move(created.server);
+    ProtocolDispatcher dispatcher(broker);
+    Connection connection = connect_one(server);
+
+    const ProtocolFrame request = encode_acquire(id<ExecutionId>(31));
+    require(connection.client.write_frame(request, io_timeout_ms).ok(), "write stale acquire");
+
+    ProtocolFrame received_request {};
+    require(server.read_frame(connection.slot, received_request, io_timeout_ms).ok(), "read stale acquire");
+
+    require(dispatcher.close_connection(server, connection.slot).ok(), "close before stale dispatch");
+    require(broker.status().phase == AuthorityPhase::ready, "close without lease remains ready");
+
+    ProtocolFrame response {};
+    const ProtocolDispatchResult stale = dispatcher.dispatch(server, connection.slot, received_request, response);
+    require(stale.error == ProtocolDispatchError::transport_failure, "stale dispatch rejected by transport lifecycle");
+    require(stale.transport_error == LocalPipeError::not_connected, "stale dispatch observes retired slot");
+    require(broker.status().phase == AuthorityPhase::ready, "stale dispatch cannot acquire authority");
+    connection.client.reset();
+}
+
 void competitor_flow(const std::filesystem::path& root)
 {
     AuthorityBroker broker(root);
@@ -308,6 +341,11 @@ int main()
     remove_root(disconnect_root);
     disconnect_flow(disconnect_root);
     remove_root(disconnect_root);
+
+    const auto stale_root = unique_root(L"stale");
+    remove_root(stale_root);
+    stale_frame_after_close_flow(stale_root);
+    remove_root(stale_root);
 
     const auto competitor_root = unique_root(L"competitor");
     remove_root(competitor_root);

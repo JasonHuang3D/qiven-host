@@ -1,14 +1,14 @@
 name: CI
 
-run-name: CI / ${{ inputs.jobs || 'full' }}
+run-name: CI / ${{ inputs.jobs }} / ${{ inputs.expected_sha }}
 
 on:
-  push:
-    branches:
-      - "jason-brother/**"
-  pull_request:
   workflow_dispatch:
     inputs:
+      expected_sha:
+        description: "Exact 40-character candidate SHA reviewed for this validation"
+        required: true
+        type: string
       jobs:
         description: "Validation units: full, windows, linux, macos"
         required: true
@@ -27,10 +27,26 @@ jobs:
       linux: ${{ steps.plan.outputs.linux }}
       macos: ${{ steps.plan.outputs.macos }}
     steps:
+      - name: Verify exact candidate identity
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+        run: |
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "expected_sha must be an exact 40-character SHA" >&2
+            exit 1
+          fi
+          if [[ "${ACTUAL_SHA,,}" != "${EXPECTED_SHA,,}" ]]; then
+            echo "Workflow SHA mismatch" >&2
+            echo "expected: $EXPECTED_SHA" >&2
+            echo "actual:   $ACTUAL_SHA" >&2
+            exit 1
+          fi
       - id: plan
         shell: bash
         env:
-          REQUESTED: ${{ inputs.jobs || 'full' }}
+          REQUESTED: ${{ inputs.jobs }}
         run: |
           case "$REQUESTED" in
             full) selected="windows linux macos" ;;
