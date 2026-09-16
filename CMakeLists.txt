@@ -14,6 +14,7 @@ add_library(qiven-host-core STATIC
     src/broker_instance_guard.cpp
     src/authority_broker.cpp
     src/protocol_codec.cpp
+    src/local_pipe_transport.cpp
 )
 target_include_directories(qiven-host-core PUBLIC include)
 qiven_target_defaults(qiven-host-core SCOPE PUBLIC FOLDER "Libraries")
@@ -58,5 +59,10 @@ if(QIVEN_HOST_BUILD_TESTS)
         target_link_libraries(qiven-host-authority-broker-tests PRIVATE qiven-host-core)
         qiven_test_target_defaults(qiven-host-authority-broker-tests)
         qiven_register_test(NAME qiven-host-authority-broker-tests TARGET qiven-host-authority-broker-tests)
+
+        add_executable(qiven-host-local-pipe-tests tests/local_pipe_transport_tests.cpp)
+        target_link_libraries(qiven-host-local-pipe-tests PRIVATE qiven-host-core advapi32)
+        qiven_test_target_defaults(qiven-host-local-pipe-tests)
+        qiven_register_test(NAME qiven-host-local-pipe-tests TARGET qiven-host-local-pipe-tests)
     endif()
 endif()

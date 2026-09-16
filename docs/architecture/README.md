@@ -9,3 +9,4 @@ Current Batch 000 implementation contracts:
 - `broker-instance-guard.md` — owner-scoped Windows broker singleton and multiprocess race semantics.
 - `authority-broker.md` — orchestration, persistence ordering, restart conservatism, and persistence-fault latching.
 - `protocol-codec.md` — bounded versioned normal-protocol wire representation and canonical decode rules.
+- `local-pipe-transport.md` — owner-only bounded Windows named-pipe transport and Host-owned connection-session lifecycle.
